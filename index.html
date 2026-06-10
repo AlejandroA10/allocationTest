@@ -111,7 +111,7 @@ tr:hover td{background:var(--bg2)}
 .mb8{margin-bottom:8px}
 .inline-form{display:none;background:var(--bg2);border-radius:var(--r-md);padding:12px;margin-top:8px;border:1px solid var(--border)}
 .bottom-bar{display:flex;gap:8px;justify-content:flex-end;padding-top:1.25rem;margin-top:1.5rem;border-top:1px solid var(--border)}
-.status{font-size:12px;min-height:20px;color:var(--text3);position:sticky;top:42px;z-index:99;background:var(--bg);margin:0 -1.25rem;padding:0 1.25rem;line-height:1.4}
+.status{font-size:12px;min-height:0;color:var(--text3);background:var(--bg);padding:0 1.25rem;line-height:1.4}
 .status.ok{color:var(--accent-dark)}.status.err{color:var(--red)}
 .empty{text-align:center;padding:2.5rem 1rem;color:var(--text3);font-size:13px}
 .asset-bubbles{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;padding-top:6px;border-top:1px solid var(--border)}
@@ -127,10 +127,10 @@ tr:hover td{background:var(--bg2)}
 </head>
 <body>
 <div class="app">
-  <div class="status" id="sb"></div>
+  <div class="status" id="sb" style="min-height:0"></div>
 
   <!-- ── SETUP ── -->
-  <div id="screen-setup" class="screen active" style="padding-top:1.5rem">
+  <div id="screen-setup" class="screen active" style="padding-top:1.25rem">
     <div class="page-title">Allocation Tracker</div>
     <div class="page-sub">Add your accounts grouped by institution. You can manage categories and add positions after setup.</div>
     <div class="sec-label">Institutions &amp; accounts</div>
