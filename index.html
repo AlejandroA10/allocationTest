@@ -178,23 +178,23 @@ tr:hover td{background:var(--bg2)}
       <!-- 1. By allocation table -->
       <div class="sec-label">By allocation</div>
       <div id="alloc-by-cat" style="margin-bottom:1.5rem"></div>
-      <!-- 2. Tax breakdown + Top 5 side by side -->
-      <div class="charts-row" style="margin-bottom:1.5rem">
+      <!-- 2. Allocation donut + tax breakdown side by side -->
+      <div class="charts-row" style="margin-bottom:1.25rem">
+        <div class="chart-box">
+          <div class="chart-lbl">Allocation breakdown</div>
+          <div style="position:relative;width:100%;height:190px"><canvas id="allocPieChart" role="img" aria-label="Portfolio allocation breakdown donut chart"></canvas></div>
+          <div class="legend" id="alloc-pie-legend"></div>
+        </div>
         <div class="chart-box">
           <div class="chart-lbl">Tax breakdown</div>
           <div class="pie-wrap"><canvas id="taxChart" role="img" aria-label="Portfolio breakdown by tax treatment"></canvas></div>
           <div class="legend" id="tax-legend"></div>
         </div>
-        <div class="chart-box">
-          <div class="chart-lbl">Top 5 holdings</div>
-          <div id="top-holdings"></div>
-        </div>
       </div>
-      <!-- 3. Equity allocation over time -->
+      <!-- 3. Top 10 holdings full width -->
       <div class="chart-box" style="margin-bottom:1.5rem">
-        <div class="chart-lbl">Equity allocation over time</div>
-        <div class="chart-wrap"><canvas id="allocChart"></canvas></div>
-        <div class="legend" id="alloc-legend"></div>
+        <div class="chart-lbl">Top 10 holdings</div>
+        <div id="top-holdings"></div>
       </div>
       <div class="bottom-bar">
         <button class="btn btn-primary" onclick="startAllocUpdate()">↻ Update allocation</button>
@@ -316,7 +316,7 @@ let DB_cats = DEFAULT_CATS.map(c=>({...c}));
 let DB_alloc = {};
 let pendingAccts = [], mPendingAccts = [];
 let allocUpdQueue = [], allocUpdIdx = 0;
-let allocChart = null;
+let allocPieChart = null;
 let taxChart = null;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -481,72 +481,48 @@ function renderOverview() {
     setA('al-date-sub',hasData?'Update quarterly':'No data yet');
   }
 
-  renderAllocChart(positions,total,equityTotal,equityCats);
+  renderAllocPieChart(positions,total);
   renderTaxChart(positions,total);
   renderTopHoldings(positions,total);
   renderAllocByCat(positions,total,equityTotal,equityCats);
 }
 
-function renderAllocChart(positions,total,equityTotal,equityCats) {
-  if(allocChart){allocChart.destroy();allocChart=null;}
-  const canvas=document.getElementById('allocChart');
-  const legendEl=document.getElementById('alloc-legend');
+function renderAllocPieChart(positions, total) {
+  if(allocPieChart){allocPieChart.destroy();allocPieChart=null;}
+  const canvas=document.getElementById('allocPieChart');
+  const legendEl=document.getElementById('alloc-pie-legend');
   if(!canvas) return;
-
-  const snaps=DB_alloc['_snapshots']||[];
+  if(!positions.length){
+    if(legendEl) legendEl.innerHTML='<span style="font-size:12px;color:var(--text3)">No positions yet</span>';
+    return;
+  }
+  // Aggregate by category
   const catTotals={};
   positions.forEach(p=>{
     const val=parseFloat(p.shares)*parseFloat(p.price);
     catTotals[p.category]=(catTotals[p.category]||0)+val;
   });
-  const allPoints=[...snaps];
-  if((!allPoints.length||allPoints[allPoints.length-1].date!==(DB_alloc['_lastUpdated']||''))&&equityTotal>0){
-    allPoints.push({date:DB_alloc['_lastUpdated']||'current',catTotals});
-  }
-
-  if(!allPoints.length||equityTotal===0){
-    if(legendEl) legendEl.innerHTML='<span style="font-size:12px;color:var(--text3)">No equity positions yet</span>';
-    return;
-  }
-
+  const items=Object.entries(catTotals).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
   const isDark=matchMedia('(prefers-color-scheme: dark)').matches;
-  const gridC=isDark?'rgba(255,255,255,0.07)':'rgba(0,0,0,0.055)';
-  const textC=isDark?'rgba(255,255,255,0.4)':'rgba(0,0,0,0.4)';
   const bgC=isDark?'#1E1E1C':'#F3F3EF';
 
-  const labels=allPoints.map(s=>s.date==='current'?'Now':new Date(s.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',year:'2-digit'}));
-  const activeCats=equityCats.filter(k=>allPoints.some(s=>(s.catTotals[k]||0)>0));
+  if(legendEl) legendEl.innerHTML=items.map(([k,v])=>`<span class="legend-item"><span class="legend-dot" style="background:${getCat(k).color}"></span>${getCat(k).label} ${Math.round(v/total*100)}%</span>`).join('');
 
-  if(legendEl) legendEl.innerHTML=activeCats.map(k=>{
-    const cat=getCat(k);
-    return `<span class="legend-item"><span class="legend-dot" style="background:${cat.color}"></span>${cat.label}</span>`;
-  }).join('');
-
-  const datasets=activeCats.map((k,i)=>({
-    label:getCat(k).label,
-    data:allPoints.map(s=>{
-      const eqTot=equityCats.reduce((sum,ek)=>sum+(s.catTotals[ek]||0),0);
-      return eqTot>0?parseFloat(((s.catTotals[k]||0)/eqTot*100).toFixed(1)):0;
-    }),
-    borderColor:getCat(k).color,
-    backgroundColor:getCat(k).color+(isDark?'59':'40'),
-    fill:i===0?'origin':'-1',
-    tension:0.3,
-    pointRadius:allPoints.length<=10?4:2,
-    pointHoverRadius:6,
-    pointBackgroundColor:getCat(k).color,
-    pointBorderColor:bgC,pointBorderWidth:2,
-  }));
-
-  allocChart=new Chart(canvas,{type:'line',data:{labels,datasets},options:{
-    responsive:true,maintainAspectRatio:false,
-    interaction:{mode:'index',intersect:false},
-    plugins:{legend:{display:false},tooltip:{callbacks:{
-      label:c=>' '+c.dataset.label+': '+c.parsed.y+'%'
-    }}},
-    scales:{
-      x:{grid:{color:gridC},ticks:{color:textC,font:{size:11}}},
-      y:{grid:{color:gridC},ticks:{color:textC,font:{size:11},callback:v=>v+'%'},min:0,max:100}
+  allocPieChart=new Chart(canvas,{type:'doughnut',data:{
+    labels:items.map(([k])=>getCat(k).label),
+    datasets:[{
+      data:items.map(([,v])=>v),
+      backgroundColor:items.map(([k])=>getCat(k).color),
+      borderWidth:2,
+      borderColor:bgC,
+      hoverOffset:4,
+    }]
+  },options:{responsive:true,maintainAspectRatio:false,
+    plugins:{
+      legend:{display:false},
+      tooltip:{callbacks:{
+        label:c=>' '+c.label+': '+fmt(c.parsed)+' ('+Math.round(c.parsed/total*100)+'%)'
+      }}
     }
   }});
 }
@@ -594,23 +570,29 @@ function renderTopHoldings(positions,total) {
     if(!tickerMap[key]) tickerMap[key]={ticker:p.ticker.trim(),value:0,category:p.category};
     tickerMap[key].value+=parseFloat(p.shares)*parseFloat(p.price);
   });
-  const sorted=Object.values(tickerMap).sort((a,b)=>b.value-a.value).slice(0,5);
-  el.innerHTML=sorted.map(p=>{
+  const sorted=Object.values(tickerMap).sort((a,b)=>b.value-a.value).slice(0,10);
+  const half=Math.ceil(sorted.length/2);
+  const col1=sorted.slice(0,half);
+  const col2=sorted.slice(half);
+  const rowHTML=(p,rank)=>{
     const pct=total>0?Math.round(p.value/total*100):0;
     const color=getCat(p.category).color;
-    return `<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border)">
-      <div>
-        <div style="font-size:13px;font-weight:500;display:flex;align-items:center;gap:6px">
-          <span style="width:8px;height:8px;border-radius:2px;background:${color};flex-shrink:0;display:inline-block"></span>${p.ticker}
-        </div>
-        <div style="font-size:11px;color:var(--text3);margin-top:1px">${getCat(p.category).label}</div>
+    return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:7px;min-width:0">
+        <span style="font-size:11px;color:var(--text3);font-family:var(--mono);width:16px;text-align:right;flex-shrink:0">${rank}</span>
+        <span style="width:8px;height:8px;border-radius:2px;background:${color};flex-shrink:0;display:inline-block"></span>
+        <span style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.ticker}</span>
       </div>
-      <div style="text-align:right">
-        <div style="font-size:13px;font-weight:500;font-family:var(--mono)">${fmt(p.value)}</div>
-        <div style="font-size:11px;color:var(--text3);font-family:var(--mono)">${pct}%</div>
+      <div style="text-align:right;flex-shrink:0;margin-left:8px">
+        <span style="font-size:13px;font-family:var(--mono)">${fmt(p.value)}</span>
+        <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px">${pct}%</span>
       </div>
     </div>`;
-  }).join('');
+  };
+  el.innerHTML=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 1.5rem">
+    <div>${col1.map((p,i)=>rowHTML(p,i+1)).join('')}</div>
+    <div>${col2.map((p,i)=>rowHTML(p,half+i+1)).join('')}</div>
+  </div>`;
 }
 
 function renderAllocByCat(positions,total,equityTotal,equityCats) {
