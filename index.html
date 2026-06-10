@@ -175,19 +175,27 @@ tr:hover td{background:var(--bg2)}
         <div class="metric"><div class="metric-lbl">Equity %</div><div class="metric-val" id="al-equity">—</div><div class="metric-sub" id="al-equity-sub"></div></div>
         <div class="metric"><div class="metric-lbl">Last updated</div><div class="metric-val" id="al-date">—</div><div class="metric-sub" id="al-date-sub"></div></div>
       </div>
-      <div class="charts-row">
+      <!-- 1. By allocation table -->
+      <div class="sec-label">By allocation</div>
+      <div id="alloc-by-cat" style="margin-bottom:1.5rem"></div>
+      <!-- 2. Tax breakdown + Top 5 side by side -->
+      <div class="charts-row" style="margin-bottom:1.5rem">
         <div class="chart-box">
-          <div class="chart-lbl">Equity allocation over time</div>
-          <div class="chart-wrap"><canvas id="allocChart"></canvas></div>
-          <div class="legend" id="alloc-legend"></div>
+          <div class="chart-lbl">Tax breakdown</div>
+          <div class="pie-wrap"><canvas id="taxChart" role="img" aria-label="Portfolio breakdown by tax treatment"></canvas></div>
+          <div class="legend" id="tax-legend"></div>
         </div>
         <div class="chart-box">
           <div class="chart-lbl">Top 5 holdings</div>
           <div id="top-holdings"></div>
         </div>
       </div>
-      <div class="sec-label">By allocation</div>
-      <div id="alloc-by-cat"></div>
+      <!-- 3. Equity allocation over time -->
+      <div class="chart-box" style="margin-bottom:1.5rem">
+        <div class="chart-lbl">Equity allocation over time</div>
+        <div class="chart-wrap"><canvas id="allocChart"></canvas></div>
+        <div class="legend" id="alloc-legend"></div>
+      </div>
       <div class="bottom-bar">
         <button class="btn btn-primary" onclick="startAllocUpdate()">↻ Update allocation</button>
       </div>
@@ -246,7 +254,6 @@ tr:hover td{background:var(--bg2)}
         </div>
       </div>
       <div id="cat-list"></div>
-      <div style="font-size:12px;color:var(--text3);margin-top:10px;line-height:1.6">Categories marked as equity are included in the equity % metric and the allocation over time chart. Toggle by clicking the "Equity" badge.</div>
     </div>
   </div>
 
@@ -310,6 +317,7 @@ let DB_alloc = {};
 let pendingAccts = [], mPendingAccts = [];
 let allocUpdQueue = [], allocUpdIdx = 0;
 let allocChart = null;
+let taxChart = null;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const uid = () => Math.random().toString(36).slice(2,9);
@@ -474,6 +482,7 @@ function renderOverview() {
   }
 
   renderAllocChart(positions,total,equityTotal,equityCats);
+  renderTaxChart(positions,total);
   renderTopHoldings(positions,total);
   renderAllocByCat(positions,total,equityTotal,equityCats);
 }
@@ -542,6 +551,40 @@ function renderAllocChart(positions,total,equityTotal,equityCats) {
   }});
 }
 
+function renderTaxChart(positions, total) {
+  if(taxChart){taxChart.destroy();taxChart=null;}
+  const canvas=document.getElementById('taxChart');
+  const legendEl=document.getElementById('tax-legend');
+  if(!canvas) return;
+  if(!positions.length){
+    if(legendEl) legendEl.innerHTML='<span style="font-size:12px;color:var(--text3)">No positions yet</span>';
+    return;
+  }
+  const TAX_C={taxable:'#378ADD',taxdeferred:'#EF9F27',taxfree:'#1D9E75',debt:'#993C1D',other:'#6B7280'};
+  const TAX_L={taxable:'Taxable',taxdeferred:'Tax-deferred',taxfree:'Tax-free (Roth)',debt:'Debt',other:'Other'};
+  // Build buckets from account tax treatment
+  const accts=allAccts();
+  const acctTypeMap={};
+  accts.forEach(a=>acctTypeMap[a.id]=a.type);
+  const buckets={};
+  positions.forEach(p=>{
+    const type=acctTypeMap[p.acctId]||'other';
+    const val=parseFloat(p.shares)*parseFloat(p.price);
+    buckets[type]=(buckets[type]||0)+val;
+  });
+  const items=Object.entries(buckets).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
+  const isDark=matchMedia('(prefers-color-scheme: dark)').matches;
+  const bgC=isDark?'#1E1E1C':'#F3F3EF';
+  if(legendEl) legendEl.innerHTML=items.map(([k,v])=>`<span class="legend-item"><span class="legend-dot" style="background:${TAX_C[k]||'#6B7280'}"></span>${TAX_L[k]||k} ${Math.round(v/total*100)}%</span>`).join('');
+  if(items.length){
+    taxChart=new Chart(canvas,{type:'doughnut',data:{
+      labels:items.map(([k])=>TAX_L[k]||k),
+      datasets:[{data:items.map(([,v])=>v),backgroundColor:items.map(([k])=>TAX_C[k]||'#6B7280'),borderWidth:2,borderColor:bgC,hoverOffset:4}]
+    },options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+fmt(c.parsed)+' ('+Math.round(c.parsed/total*100)+'%)'}}}}});
+  }
+}
+
 function renderTopHoldings(positions,total) {
   const el=document.getElementById('top-holdings'); if(!el) return;
   if(!positions.length){el.innerHTML='<div style="font-size:12px;color:var(--text3);padding:8px 0">No positions yet</div>';return;}
@@ -586,34 +629,53 @@ function renderAllocByCat(positions,total,equityTotal,equityCats) {
     const color=getCat(cat).color;
     const isEq=equityCats.includes(cat);
 
-    // Drift for equity categories
+    // Drift — any category with a target set
     let driftHTML='';
-    // Equity targets from DB_cats
     const catDef=DB_cats.find(c=>c.id===cat);
-    if(isEq&&equityTotal>0&&catDef?.target){
-      const actual=catTotal/equityTotal*100;
-      const driftDollar=catTotal-(equityTotal*catDef.target/100);
-      const inTol=Math.abs(actual-catDef.target)<=5;
-      const dColor=inTol?'var(--text3)':'var(--red)';
-      const dSign=driftDollar>=0?'+':'-';
-      driftHTML=`<span style="font-size:12px;font-family:var(--mono);color:${dColor}">${actual.toFixed(1)}% current · ${dSign}${fmt(Math.abs(driftDollar)).replace('$','')} vs ${catDef.target}% target</span>`;
+    if(catDef?.target!=null&&total>0){
+      const actual=catTotal/total*100;
+      const targetPct=catDef.target;
+      const driftDollar=catTotal-(total*targetPct/100);
+      const driftPct=actual-targetPct;
+      // Threshold: 25% of the target value itself
+      const threshold=targetPct*0.25;
+      const overThreshold=Math.abs(driftPct)>threshold;
+      const withinTolerance=Math.abs(driftPct)<(threshold*0.5); // within half the threshold = neutral
+      let dColor, message;
+      if(withinTolerance){
+        dColor='var(--text3)';
+        message='On target';
+      } else if(driftDollar>0){
+        dColor=overThreshold?'var(--red)':'#D97706';
+        message=`Overweight by ${fmt(Math.abs(driftDollar))} — consider trimming`;
+      } else {
+        dColor=overThreshold?'var(--red)':'#D97706';
+        message=`Underweight by ${fmt(Math.abs(driftDollar))} — consider adding`;
+      }
+      driftHTML=`<span style="font-size:12px;color:${dColor}">${message}</span>`;
     }
 
-    // Aggregate by ticker within category, show location
+    // Aggregate by ticker within category, show location as "Account (Institution)" with per-account values
     const tickerMap={};
     poses.forEach(p=>{
       const key=p.ticker.trim().toUpperCase();
-      if(!tickerMap[key]) tickerMap[key]={ticker:p.ticker.trim(),value:0,locations:new Set()};
+      if(!tickerMap[key]) tickerMap[key]={ticker:p.ticker.trim(),value:0,locs:[]};
       tickerMap[key].value+=p.value;
-      tickerMap[key].locations.add(p.acctName);
+      // Find institution name for this account
+      const inst=DB.institutions.find(i=>i.id===p.instId);
+      tickerMap[key].locs.push({label:`${p.acctName} (${inst?inst.name:p.instName})`,value:p.value});
     });
-    const rows=Object.values(tickerMap).sort((a,b)=>b.value-a.value).map(p=>`
-      <tr>
+    // Sort locs by value desc within each ticker
+    Object.values(tickerMap).forEach(t=>t.locs.sort((a,b)=>b.value-a.value));
+    const rows=Object.values(tickerMap).sort((a,b)=>b.value-a.value).map(p=>{
+      const locLines=p.locs.map(l=>`<div style="font-size:11px;color:var(--text3);font-family:var(--font)">${l.label} <span style="font-family:var(--mono)">${fmt(l.value)}</span></div>`).join('');
+      return `<tr>
         <td>${p.ticker}</td>
-        <td style="text-align:left;color:var(--text2)">${[...p.locations].join(', ')}</td>
-        <td style="font-weight:500">${fmt(p.value)}</td>
+        <td style="text-align:left">${locLines}</td>
+        <td style="font-size:12px;text-align:center;font-family:var(--mono)">${fmt(p.value)}</td>
         <td style="color:var(--text3)">${total>0?Math.round(p.value/total*100):0}%</td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
 
     return `<div class="tbl-wrap" style="margin-bottom:12px" id="acat-wrap-${cat}">
       <div style="display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;padding:9px 13px;background:var(--bg2);border-bottom:1px solid var(--border);cursor:pointer" onclick="toggleAllocCat('acat-${cat}','acat-chev-${cat}')">
@@ -629,7 +691,7 @@ function renderAllocByCat(positions,total,equityTotal,equityCats) {
         </div>
       </div>
       <div id="acat-${cat}" style="display:none">
-        <table><thead><tr><th>Ticker / Name</th><th style="text-align:left">Location</th><th>Value</th><th>% of total</th></tr></thead>
+        <table><thead><tr><th>Ticker / Name</th><th></th><th style="text-align:center">Value</th><th>% of total</th></tr></thead>
         <tbody>${rows}</tbody></table>
       </div>
     </div>`;
@@ -648,11 +710,8 @@ function toggleAllocCat(id,chevId) {
 // ─── Categories pane ──────────────────────────────────────────────────────────
 function renderCatList() {
   const el=document.getElementById('cat-list'); if(!el) return;
-  const equityOnly=DB_cats.filter(c=>c.isEquity);
-  const totalTarget=equityOnly.reduce((s,c)=>s+(parseFloat(c.target)||0),0);
-  const targetStatus=equityOnly.length
-    ? `<div style="font-size:12px;color:var(--text3);margin-top:10px;margin-bottom:4px">Equity target sum: <span style="font-family:var(--mono);font-weight:600;color:${Math.abs(totalTarget-100)<0.01?'var(--accent-dark)':totalTarget>100?'var(--red)':'var(--text)'}">${totalTarget.toFixed(1)}%</span> <span style="color:var(--text3)">${Math.abs(totalTarget-100)<0.01?'✓ sums to 100%':totalTarget>100?'over 100%':'of 100%'}</span></div>`
-    : '';
+  const totalTarget=DB_cats.reduce((s,c)=>s+(parseFloat(c.target)||0),0);
+  const targetStatus=`<div style="font-size:12px;color:var(--text3);margin-top:10px;margin-bottom:4px">Target sum: <span style="font-family:var(--mono);font-weight:600;color:${Math.abs(totalTarget-100)<0.01?'var(--accent-dark)':totalTarget>100?'var(--red)':'var(--text)'}">${totalTarget.toFixed(1)}%</span> <span style="color:var(--text3)">${Math.abs(totalTarget-100)<0.01?'✓ sums to 100%':totalTarget>100?'over 100%':'of 100%'}</span></div>`;
   el.innerHTML=`<div class="tbl-wrap"><table>
     <thead><tr><th>Category</th><th style="text-align:left">Type</th><th>Target %</th><th style="text-align:left">Color</th><th></th></tr></thead>
     <tbody>${DB_cats.map((c,i)=>{
@@ -660,17 +719,15 @@ function renderCatList() {
       const colorCell=isDefault
         ? `<div style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:14px;border-radius:3px;background:${c.color};display:inline-block;border:1px solid var(--border)"></span></div>`
         : `<input type="color" value="${c.color}" style="width:28px;height:24px;padding:1px 2px;border-radius:4px;cursor:pointer;border:1px solid var(--border2);background:var(--bg)" onchange="updateCatColor(${i},this.value)" title="Click to change color" />`;
-      const targetCell=c.isEquity
-        ? `<div style="display:flex;align-items:center;justify-content:flex-end;gap:4px">
-            <span style="font-size:13px;font-family:var(--mono)">${c.target!=null?c.target+'%':'—'}</span>
-            <button class="btn-ghost" style="font-size:11px;padding:2px 5px" onclick="toggleTargetEdit('target-edit-${c.id}')" title="Edit target">✎</button>
-          </div>
-          <div id="target-edit-${c.id}" style="display:none;margin-top:4px;justify-content:flex-end;gap:4px">
-            <input type="number" step="0.1" min="0" max="100" value="${c.target||''}" placeholder="e.g. 42" id="target-inp-${c.id}" style="height:28px;font-size:12px;width:70px;text-align:right" />
-            <button class="btn btn-xs btn-primary" onclick="saveTarget('${c.id}',${i})" style="height:28px">✓</button>
-            <button class="btn btn-xs" onclick="toggleTargetEdit('target-edit-${c.id}')" style="height:28px">✕</button>
-          </div>`
-        : `<span style="font-size:12px;color:var(--text3)">—</span>`;
+      const targetCell=`<div style="display:flex;align-items:center;justify-content:flex-end;gap:4px">
+          <span style="font-size:13px;font-family:var(--mono)">${c.target!=null?c.target+'%':'—'}</span>
+          <button class="btn-ghost" style="font-size:11px;padding:2px 5px" onclick="toggleTargetEdit('target-edit-${c.id}')" title="Edit target">✎</button>
+        </div>
+        <div id="target-edit-${c.id}" style="display:none;margin-top:4px;justify-content:flex-end;gap:4px">
+          <input type="number" step="0.1" min="0" max="100" value="${c.target||''}" placeholder="e.g. 42" id="target-inp-${c.id}" style="height:28px;font-size:12px;width:70px;text-align:right" />
+          <button class="btn btn-xs btn-primary" onclick="saveTarget('${c.id}',${i})" style="height:28px">✓</button>
+          <button class="btn btn-xs" onclick="toggleTargetEdit('target-edit-${c.id}')" style="height:28px">✕</button>
+        </div>`;
       return `<tr>
         <td>${c.label}</td>
         <td style="text-align:left">
