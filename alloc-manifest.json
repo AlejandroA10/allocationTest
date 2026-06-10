@@ -2,7 +2,7 @@
   "name": "Allocation Tracker",
   "short_name": "Allocation",
   "description": "Track and visualize your investment allocation across accounts",
-  "start_url": "./allocation-tracker.html",
+  "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#FAFAF8",
   "theme_color": "#1D9E75",
