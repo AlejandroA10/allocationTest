@@ -165,7 +165,7 @@ tr:hover td{background:var(--bg2)}
     <div class="nav-bar">
       <button class="nav-tab active" id="tab-overview" onclick="showTab('overview')">Overview</button>
       <button class="nav-tab" id="tab-accounts" onclick="showTab('accounts')">Accounts</button>
-      <button class="nav-tab" id="tab-categories" onclick="showTab('categories')">Categories</button>
+      <button class="nav-tab" id="tab-categories" onclick="showTab('categories')">Settings</button>
     </div>
 
     <!-- Overview pane -->
@@ -646,24 +646,30 @@ function renderCatList() {
   const el=document.getElementById('cat-list'); if(!el) return;
   el.innerHTML=`<div class="tbl-wrap"><table>
     <thead><tr><th>Category</th><th style="text-align:left">Type</th><th style="text-align:left">Color</th><th></th></tr></thead>
-    <tbody>${DB_cats.map((c,i)=>`<tr>
-      <td>${c.label}</td>
-      <td style="text-align:left">
-        <span onclick="toggleEquity(${i})" style="cursor:pointer;font-size:11px;padding:2px 8px;border-radius:99px;font-weight:500;font-family:var(--mono);background:${c.isEquity?'var(--accent-light)':'var(--bg3)'};color:${c.isEquity?'var(--accent-dark)':'var(--text3)'}">
-          ${c.isEquity?'Equity':'Non-equity'}
-        </span>
-      </td>
-      <td style="text-align:left">
-        <div style="display:flex;align-items:center;gap:6px">
-          <span style="width:14px;height:14px;border-radius:3px;background:${c.color};display:inline-block;border:1px solid var(--border)"></span>
-          <span style="font-size:12px;font-family:var(--mono);color:var(--text3)">${c.color}</span>
-        </div>
-      </td>
-      <td style="text-align:right">
-        ${DEFAULT_CATS.find(d=>d.id===c.id)?'<span style="font-size:11px;color:var(--text3)">default</span>':'<button class="btn-ghost" style="color:var(--red);font-size:12px" onclick="deleteCat(\''+c.id+'\')">✕</button>'}
-      </td>
-    </tr>`).join('')}
+    <tbody>${DB_cats.map((c,i)=>{
+      const isDefault=!!DEFAULT_CATS.find(d=>d.id===c.id);
+      const colorCell=isDefault
+        ? `<div style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:14px;border-radius:3px;background:${c.color};display:inline-block;border:1px solid var(--border)"></span><span style="font-size:12px;font-family:var(--mono);color:var(--text3)">${c.color}</span></div>`
+        : `<div style="display:flex;align-items:center;gap:6px"><input type="color" value="${c.color}" style="width:28px;height:24px;padding:1px 2px;border-radius:4px;cursor:pointer;border:1px solid var(--border2);background:var(--bg)" onchange="updateCatColor(${i},this.value)" title="Click to change color" /><span style="font-size:12px;font-family:var(--mono);color:var(--text3)">${c.color}</span></div>`;
+      return `<tr>
+        <td>${c.label}</td>
+        <td style="text-align:left">
+          <span onclick="toggleEquity(${i})" style="cursor:pointer;font-size:11px;padding:2px 8px;border-radius:99px;font-weight:500;font-family:var(--mono);background:${c.isEquity?'var(--accent-light)':'var(--bg3)'};color:${c.isEquity?'var(--accent-dark)':'var(--text3)'}">
+            ${c.isEquity?'Equity':'Non-equity'}
+          </span>
+        </td>
+        <td style="text-align:left">${colorCell}</td>
+        <td style="text-align:right">
+          ${isDefault?'<span style="font-size:11px;color:var(--text3)">default</span>':'<button class="btn-ghost" style="color:var(--red);font-size:12px" onclick="deleteCat(\''+c.id+'\')">✕</button>'}
+        </td>
+      </tr>`;
+    }).join('')}
     </tbody></table></div>`;
+}
+
+async function updateCatColor(i, color) {
+  DB_cats[i]={...DB_cats[i],color};
+  await persist(); renderCatList(); renderOverview();
 }
 
 function toggleAddCatForm() {
