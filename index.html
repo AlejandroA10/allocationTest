@@ -236,6 +236,10 @@ tr:hover td{background:var(--bg2)}
           <div><label>Category name</label><input id="cat-name-inp" placeholder="e.g. REITs" /></div>
           <div><label>Color</label><input id="cat-color-inp" type="color" value="#1D9E75" style="height:36px;padding:2px 4px;cursor:pointer" /></div>
         </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+          <input type="checkbox" id="cat-equity-inp" style="width:auto;height:auto;cursor:pointer" />
+          <label for="cat-equity-inp" style="margin:0;cursor:pointer;font-size:13px;font-weight:400;color:var(--text)">This is an equity category</label>
+        </div>
         <div class="row">
           <button class="btn btn-primary btn-sm" onclick="saveNewCat()">Save</button>
           <button class="btn btn-sm" onclick="toggleAddCatForm()">Cancel</button>
@@ -644,27 +648,65 @@ function toggleAllocCat(id,chevId) {
 // ─── Categories pane ──────────────────────────────────────────────────────────
 function renderCatList() {
   const el=document.getElementById('cat-list'); if(!el) return;
+  const equityOnly=DB_cats.filter(c=>c.isEquity);
+  const totalTarget=equityOnly.reduce((s,c)=>s+(parseFloat(c.target)||0),0);
+  const targetStatus=equityOnly.length
+    ? `<div style="font-size:12px;color:var(--text3);margin-top:10px;margin-bottom:4px">Equity target sum: <span style="font-family:var(--mono);font-weight:600;color:${Math.abs(totalTarget-100)<0.01?'var(--accent-dark)':totalTarget>100?'var(--red)':'var(--text)'}">${totalTarget.toFixed(1)}%</span> <span style="color:var(--text3)">${Math.abs(totalTarget-100)<0.01?'✓ sums to 100%':totalTarget>100?'over 100%':'of 100%'}</span></div>`
+    : '';
   el.innerHTML=`<div class="tbl-wrap"><table>
-    <thead><tr><th>Category</th><th style="text-align:left">Type</th><th style="text-align:left">Color</th><th></th></tr></thead>
+    <thead><tr><th>Category</th><th style="text-align:left">Type</th><th>Target %</th><th style="text-align:left">Color</th><th></th></tr></thead>
     <tbody>${DB_cats.map((c,i)=>{
       const isDefault=!!DEFAULT_CATS.find(d=>d.id===c.id);
       const colorCell=isDefault
-        ? `<div style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:14px;border-radius:3px;background:${c.color};display:inline-block;border:1px solid var(--border)"></span><span style="font-size:12px;font-family:var(--mono);color:var(--text3)">${c.color}</span></div>`
-        : `<div style="display:flex;align-items:center;gap:6px"><input type="color" value="${c.color}" style="width:28px;height:24px;padding:1px 2px;border-radius:4px;cursor:pointer;border:1px solid var(--border2);background:var(--bg)" onchange="updateCatColor(${i},this.value)" title="Click to change color" /><span style="font-size:12px;font-family:var(--mono);color:var(--text3)">${c.color}</span></div>`;
+        ? `<div style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:14px;border-radius:3px;background:${c.color};display:inline-block;border:1px solid var(--border)"></span></div>`
+        : `<input type="color" value="${c.color}" style="width:28px;height:24px;padding:1px 2px;border-radius:4px;cursor:pointer;border:1px solid var(--border2);background:var(--bg)" onchange="updateCatColor(${i},this.value)" title="Click to change color" />`;
+      const targetCell=c.isEquity
+        ? `<div style="display:flex;align-items:center;justify-content:flex-end;gap:4px">
+            <span style="font-size:13px;font-family:var(--mono)">${c.target!=null?c.target+'%':'—'}</span>
+            <button class="btn-ghost" style="font-size:11px;padding:2px 5px" onclick="toggleTargetEdit('target-edit-${c.id}')" title="Edit target">✎</button>
+          </div>
+          <div id="target-edit-${c.id}" style="display:none;margin-top:4px;justify-content:flex-end;gap:4px">
+            <input type="number" step="0.1" min="0" max="100" value="${c.target||''}" placeholder="e.g. 42" id="target-inp-${c.id}" style="height:28px;font-size:12px;width:70px;text-align:right" />
+            <button class="btn btn-xs btn-primary" onclick="saveTarget('${c.id}',${i})" style="height:28px">✓</button>
+            <button class="btn btn-xs" onclick="toggleTargetEdit('target-edit-${c.id}')" style="height:28px">✕</button>
+          </div>`
+        : `<span style="font-size:12px;color:var(--text3)">—</span>`;
       return `<tr>
         <td>${c.label}</td>
         <td style="text-align:left">
-          <span onclick="toggleEquity(${i})" style="cursor:pointer;font-size:11px;padding:2px 8px;border-radius:99px;font-weight:500;font-family:var(--mono);background:${c.isEquity?'var(--accent-light)':'var(--bg3)'};color:${c.isEquity?'var(--accent-dark)':'var(--text3)'}">
+          <span style="font-size:11px;padding:2px 8px;border-radius:99px;font-weight:500;font-family:var(--mono);background:${c.isEquity?'var(--accent-light)':'var(--bg3)'};color:${c.isEquity?'var(--accent-dark)':'var(--text3)'}">
             ${c.isEquity?'Equity':'Non-equity'}
           </span>
         </td>
+        <td style="text-align:right;vertical-align:top">${targetCell}</td>
         <td style="text-align:left">${colorCell}</td>
         <td style="text-align:right">
           ${isDefault?'<span style="font-size:11px;color:var(--text3)">default</span>':'<button class="btn-ghost" style="color:var(--red);font-size:12px" onclick="deleteCat(\''+c.id+'\')">✕</button>'}
         </td>
       </tr>`;
     }).join('')}
-    </tbody></table></div>`;
+    </tbody></table></div>${targetStatus}`;
+}
+
+function toggleTargetEdit(id) {
+  const el=document.getElementById(id); if(!el) return;
+  const open=el.style.display==='flex';
+  // Close all other open target edits first
+  document.querySelectorAll('[id^="target-edit-"]').forEach(e=>e.style.display='none');
+  el.style.display=open?'none':'flex';
+  if(!open) {
+    const catId=id.replace('target-edit-','');
+    const inp=document.getElementById('target-inp-'+catId);
+    if(inp) inp.focus();
+  }
+}
+
+async function saveTarget(catId, idx) {
+  const inp=document.getElementById('target-inp-'+catId);
+  const val=inp?parseFloat(inp.value):NaN;
+  if(isNaN(val)||val<0||val>100){setStatus('Enter a value between 0 and 100.','err');return;}
+  DB_cats[idx]={...DB_cats[idx],target:val};
+  await persist(); renderCatList(); renderOverview();
 }
 
 async function updateCatColor(i, color) {
@@ -679,12 +721,14 @@ function toggleAddCatForm() {
 async function saveNewCat() {
   const name=document.getElementById('cat-name-inp').value.trim();
   const color=document.getElementById('cat-color-inp').value;
+  const isEquity=document.getElementById('cat-equity-inp').checked;
   if(!name){setStatus('Enter a category name.','err');return;}
   if(DB_cats.find(c=>c.label.toLowerCase()===name.toLowerCase())){setStatus('Category already exists.','err');return;}
   const id='cat_'+uid();
-  DB_cats.push({id,label:name,color,isEquity:false});
+  DB_cats.push({id,label:name,color,isEquity});
   await persist(); toggleAddCatForm(); renderCatList();
   document.getElementById('cat-name-inp').value='';
+  document.getElementById('cat-equity-inp').checked=false;
 }
 async function deleteCat(id) {
   if(DEFAULT_CATS.find(d=>d.id===id)){setStatus('Cannot remove default categories.','err');return;}
@@ -697,11 +741,6 @@ async function deleteCat(id) {
   DB_cats=DB_cats.filter(c=>c.id!==id);
   await persist(); renderCatList();
 }
-async function toggleEquity(i) {
-  DB_cats[i]={...DB_cats[i],isEquity:!DB_cats[i].isEquity};
-  await persist(); renderCatList(); renderOverview();
-}
-
 // ─── Accounts tab ─────────────────────────────────────────────────────────────
 function renderManage() {
   const el=document.getElementById('manage-list'); if(!el) return;
