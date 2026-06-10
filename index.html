@@ -229,13 +229,25 @@ tr:hover td{background:var(--bg2)}
       </div>
       <!-- Data backup -->
       <div style="margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border)">
-        <div class="sec-label" style="margin-bottom:6px">Data backup</div>
+        <div class="sec-label" style="margin-bottom:4px">Full backup</div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Exports everything — accounts, categories, targets, all positions. Use this to move to a new device.</div>
         <div class="row">
-          <button class="btn btn-sm" onclick="exportDB()">↓ Export backup</button>
-          <button class="btn btn-sm" onclick="document.getElementById('import-db-file').click()">↑ Import backup</button>
+          <button class="btn btn-sm" onclick="exportDB()">↓ Export JSON</button>
+          <button class="btn btn-sm" onclick="document.getElementById('import-db-file').click()">↑ Import JSON</button>
           <input type="file" id="import-db-file" accept=".json" style="display:none" onchange="importDB(this)" />
         </div>
         <div id="import-db-status" style="font-size:12px;margin-top:8px;color:var(--text3)"></div>
+      </div>
+      <!-- CSV price update -->
+      <div style="margin-top:1.25rem;padding-top:1.25rem;border-top:1px solid var(--border)">
+        <div class="sec-label" style="margin-bottom:4px">Price update</div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Export positions to a spreadsheet, fill in current prices (e.g. with GOOGLEFINANCE), update share counts if needed, then import back. Replaces all positions on import.</div>
+        <div class="row">
+          <button class="btn btn-sm" onclick="exportPositionsCSV()">↓ Export CSV</button>
+          <button class="btn btn-sm" onclick="document.getElementById('import-csv-file').click()">↑ Import CSV</button>
+          <input type="file" id="import-csv-file" accept=".csv" style="display:none" onchange="importPositionsCSV(this)" />
+        </div>
+        <div id="import-csv-status" style="font-size:12px;margin-top:8px;color:var(--text3)"></div>
       </div>
     </div>
 
@@ -564,7 +576,7 @@ function renderTargetMiniChart() {
   },options:{responsive:true,maintainAspectRatio:false,
     plugins:{
       legend:{display:false},
-      tooltip:{callbacks:{label:c=>' '+c.label+': '+c.parsed+'%'}}
+      tooltip:{enabled:false}
     }
   }});
 }
@@ -1039,11 +1051,138 @@ function exportDB(){
   const payload={version:1,exportedAt:new Date().toISOString(),db:DB,cats:DB_cats,alloc:DB_alloc};
   const clean=JSON.parse(JSON.stringify(payload));
   clean.db.institutions=clean.db.institutions.map(i=>{const{iconData,...rest}=i;return rest;});
+  // Strip snapshots — not needed, no over-time chart
+  delete clean.alloc['_snapshots'];
+  delete clean.alloc['_lastUpdated'];
   const json=JSON.stringify(clean,null,2);
   const date=new Date().toISOString().split('T')[0];
   const a=document.createElement('a');
   a.href='data:application/json;charset=utf-8,'+encodeURIComponent(json);
   a.download='allocation-backup-'+date+'.json'; a.click();
+}
+
+function exportPositionsCSV() {
+  const rows=[['Institution','Account','Ticker / Name','Shares','Price','Category']];
+  DB.institutions.forEach(inst=>{
+    inst.accounts.forEach(a=>{
+      const positions=DB_alloc[a.id]||[];
+      if(positions.length===0){
+        // Include empty accounts so user can add positions
+        rows.push([inst.name, a.name, '', '', '', '']);
+      } else {
+        positions.forEach(pos=>{
+          const cat=DB_cats.find(c=>c.id===pos.category);
+          rows.push([
+            inst.name,
+            a.name,
+            pos.ticker,
+            pos.shares,
+            '', // price intentionally blank
+            cat?cat.label:pos.category
+          ]);
+        });
+      }
+    });
+  });
+  const csv=rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const date=new Date().toISOString().split('T')[0];
+  const a=document.createElement('a');
+  a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
+  a.download='allocation-positions-'+date+'.csv'; a.click();
+}
+
+async function importPositionsCSV(input) {
+  const file=input.files[0]; if(!file) return;
+  const statusEl=document.getElementById('import-csv-status');
+  const reader=new FileReader();
+  reader.onload=async e=>{
+    try {
+      const lines=e.target.result.trim().split('\n');
+      if(lines.length<2){
+        if(statusEl){statusEl.textContent='File appears empty.';statusEl.style.color='var(--red)';}
+        return;
+      }
+      // Parse CSV (handles quoted fields)
+      const parseRow=line=>{
+        const result=[]; let cur=''; let inQ=false;
+        for(let i=0;i<line.length;i++){
+          if(line[i]==='"'){
+            if(inQ&&line[i+1]==='"'){cur+='"';i++;}
+            else inQ=!inQ;
+          } else if(line[i]===','&&!inQ){result.push(cur.trim());cur='';}
+          else cur+=line[i];
+        }
+        result.push(cur.trim()); return result;
+      };
+
+      const header=parseRow(lines[0]).map(h=>h.toLowerCase());
+      const instIdx=header.findIndex(h=>h.includes('institution'));
+      const acctIdx=header.findIndex(h=>h.includes('account'));
+      const tickerIdx=header.findIndex(h=>h.includes('ticker')||h.includes('name'));
+      const sharesIdx=header.findIndex(h=>h.includes('share'));
+      const priceIdx=header.findIndex(h=>h.includes('price'));
+      const catIdx=header.findIndex(h=>h.includes('cat'));
+
+      if([instIdx,acctIdx,tickerIdx,sharesIdx,priceIdx].some(i=>i===-1)){
+        if(statusEl){statusEl.textContent='Could not find required columns. Make sure you exported from this app.';statusEl.style.color='var(--red)';}
+        return;
+      }
+
+      // Build new alloc from CSV
+      const newAlloc={};
+      const warnings=[];
+      let loaded=0;
+
+      for(let i=1;i<lines.length;i++){
+        const row=parseRow(lines[i]);
+        const instName=row[instIdx]||''; const acctName=row[acctIdx]||'';
+        const ticker=(row[tickerIdx]||'').trim();
+        const shares=parseFloat(row[sharesIdx]);
+        const price=parseFloat(row[priceIdx]);
+        const catLabel=(row[catIdx]||'').trim();
+        if(!ticker) continue; // skip empty ticker rows
+        if(isNaN(shares)||shares<0){warnings.push('Row '+(i+1)+': invalid shares for '+ticker);continue;}
+        if(isNaN(price)||price<0){warnings.push('Row '+(i+1)+': invalid or missing price for '+ticker+' — skipped');continue;}
+
+        // Find matching account
+        const inst=DB.institutions.find(i=>i.name.trim()===instName.trim());
+        const acct=inst?inst.accounts.find(a=>a.name.trim()===acctName.trim()):null;
+        if(!acct){warnings.push('Row '+(i+1)+': account "'+acctName+'" at "'+instName+'" not found — skipped');continue;}
+
+        // Resolve category by label
+        const cat=DB_cats.find(c=>c.label.toLowerCase()===catLabel.toLowerCase());
+        const catId=cat?cat.id:'other';
+
+        if(!newAlloc[acct.id]) newAlloc[acct.id]=[];
+        newAlloc[acct.id].push({id:uid(),ticker,shares:parseFloat(shares.toFixed(4)),price:parseFloat(price.toFixed(2)),category:catId});
+        loaded++;
+      }
+
+      if(!loaded&&!warnings.length){
+        if(statusEl){statusEl.textContent='No valid positions found in file.';statusEl.style.color='var(--red)';}
+        input.value=''; return;
+      }
+
+      const warnMsg=warnings.length?' · '+warnings.length+' row(s) skipped':'';
+      if(!confirm('Replace all current positions with '+loaded+' imported positions?'+warnMsg+(warnings.length?'\n\nIssues:\n'+warnings.slice(0,5).join('\n'):'')+'\n\nContinue?')){
+        input.value=''; return;
+      }
+
+      // Preserve existing _lastUpdated and _snapshots keys
+      const preserved={};
+      if(DB_alloc['_lastUpdated']) preserved['_lastUpdated']=DB_alloc['_lastUpdated'];
+      DB_alloc={...preserved,...newAlloc};
+      await persist();
+      if(statusEl){
+        statusEl.textContent=loaded+' positions imported.'+warnMsg;
+        statusEl.style.color='var(--accent-dark)';
+      }
+      renderOverview(); input.value='';
+    } catch(err){
+      if(statusEl){statusEl.textContent='Error reading file: '+err.message;statusEl.style.color='var(--red)';}
+    }
+  };
+  reader.readAsText(file);
 }
 async function importDB(input){
   const file=input.files[0]; if(!file) return;
