@@ -180,10 +180,16 @@ tr:hover td{background:var(--bg2)}
       <div id="alloc-by-cat" style="margin-bottom:1.5rem"></div>
       <!-- 2. Allocation donut + tax breakdown side by side -->
       <div class="charts-row" style="margin-bottom:1.25rem">
-        <div class="chart-box">
+        <div class="chart-box" style="position:relative">
           <div class="chart-lbl">Allocation breakdown</div>
           <div style="position:relative;width:100%;height:190px"><canvas id="allocPieChart" role="img" aria-label="Portfolio allocation breakdown donut chart"></canvas></div>
           <div class="legend" id="alloc-pie-legend"></div>
+          <!-- Target mini pie — only shown when targets exist -->
+          <!-- Target mini pie — only shown when targets exist -->
+          <div id="target-mini-wrap" style="display:none;position:absolute;top:8px;right:10px;text-align:center">
+            <div style="font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Target</div>
+            <div style="position:relative;width:70px;height:70px"><canvas id="targetMiniChart" role="img" aria-label="Target allocation mini pie"></canvas></div>
+          </div>
         </div>
         <div class="chart-box">
           <div class="chart-lbl">Tax breakdown</div>
@@ -237,7 +243,10 @@ tr:hover td{background:var(--bg2)}
     <div id="pane-categories" style="display:none;padding-top:1.25rem">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
         <div class="sec-label" style="margin:0">Allocation categories</div>
-        <button class="btn btn-xs" onclick="toggleAddCatForm()">+ Add category</button>
+        <div class="row">
+          <button class="btn btn-xs" onclick="resetDefaultColors()">Reset default colors</button>
+          <button class="btn btn-xs btn-primary" onclick="toggleAddCatForm()">+ Add category</button>
+        </div>
       </div>
       <div id="add-cat-form" class="card" style="display:none;margin-bottom:12px">
         <div class="g2 mb8">
@@ -318,6 +327,7 @@ let pendingAccts = [], mPendingAccts = [];
 let allocUpdQueue = [], allocUpdIdx = 0;
 let allocPieChart = null;
 let taxChart = null;
+let targetMiniChart = null;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const uid = () => Math.random().toString(36).slice(2,9);
@@ -482,6 +492,7 @@ function renderOverview() {
   }
 
   renderAllocPieChart(positions,total);
+  renderTargetMiniChart();
   renderTaxChart(positions,total);
   renderTopHoldings(positions,total);
   renderAllocByCat(positions,total,equityTotal,equityCats);
@@ -523,6 +534,37 @@ function renderAllocPieChart(positions, total) {
       tooltip:{callbacks:{
         label:c=>' '+c.label+': '+fmt(c.parsed)+' ('+Math.round(c.parsed/total*100)+'%)'
       }}
+    }
+  }});
+}
+
+function renderTargetMiniChart() {
+  if(targetMiniChart){targetMiniChart.destroy();targetMiniChart=null;}
+  const wrap=document.getElementById('target-mini-wrap');
+  const canvas=document.getElementById('targetMiniChart');
+  if(!wrap||!canvas) return;
+
+  // Only show if at least one category has a target set
+  const withTargets=DB_cats.filter(c=>c.target!=null&&parseFloat(c.target)>0);
+  if(!withTargets.length){wrap.style.display='none';return;}
+
+  wrap.style.display='block';
+  const isDark=matchMedia('(prefers-color-scheme: dark)').matches;
+  const bgC=isDark?'#1E1E1C':'#F3F3EF';
+
+  targetMiniChart=new Chart(canvas,{type:'pie',data:{
+    labels:withTargets.map(c=>c.label),
+    datasets:[{
+      data:withTargets.map(c=>parseFloat(c.target)),
+      backgroundColor:withTargets.map(c=>c.color),
+      borderWidth:1.5,
+      borderColor:bgC,
+      hoverOffset:3,
+    }]
+  },options:{responsive:true,maintainAspectRatio:false,
+    plugins:{
+      legend:{display:false},
+      tooltip:{callbacks:{label:c=>' '+c.label+': '+c.parsed+'%'}}
     }
   }});
 }
@@ -698,9 +740,7 @@ function renderCatList() {
     <thead><tr><th>Category</th><th style="text-align:left">Type</th><th>Target %</th><th style="text-align:left">Color</th><th></th></tr></thead>
     <tbody>${DB_cats.map((c,i)=>{
       const isDefault=!!DEFAULT_CATS.find(d=>d.id===c.id);
-      const colorCell=isDefault
-        ? `<div style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:14px;border-radius:3px;background:${c.color};display:inline-block;border:1px solid var(--border)"></span></div>`
-        : `<input type="color" value="${c.color}" style="width:28px;height:24px;padding:1px 2px;border-radius:4px;cursor:pointer;border:1px solid var(--border2);background:var(--bg)" onchange="updateCatColor(${i},this.value)" title="Click to change color" />`;
+      const colorCell=`<input type="color" value="${c.color}" style="width:28px;height:24px;padding:1px 2px;border-radius:4px;cursor:pointer;border:1px solid var(--border2);background:var(--bg)" onchange="updateCatColor(${i},this.value)" title="Click to change color" />`;
       const targetCell=`<div style="display:flex;align-items:center;justify-content:flex-end;gap:4px">
           <span style="font-size:13px;font-family:var(--mono)">${c.target!=null?c.target+'%':'—'}</span>
           <button class="btn-ghost" style="font-size:11px;padding:2px 5px" onclick="toggleTargetEdit('target-edit-${c.id}')" title="Edit target">✎</button>
@@ -748,9 +788,28 @@ async function saveTarget(catId, idx) {
   await persist(); renderCatList(); renderOverview();
 }
 
+async function persistSilent() {
+  try {
+    await idbSet(DB_KEY, JSON.stringify(DB));
+    await idbSet('alloc-cats', JSON.stringify(DB_cats));
+    await idbSet('alloc-data', JSON.stringify(DB_alloc));
+  } catch(e) { setStatus('Save error: '+e.message,'err'); }
+}
+
 async function updateCatColor(i, color) {
   DB_cats[i]={...DB_cats[i],color};
-  await persist(); renderCatList(); renderOverview();
+  await persistSilent();
+  renderOverview();
+}
+
+async function resetDefaultColors() {
+  DEFAULT_CATS.forEach(def=>{
+    const idx=DB_cats.findIndex(c=>c.id===def.id);
+    if(idx>=0) DB_cats[idx]={...DB_cats[idx],color:def.color};
+  });
+  await persistSilent();
+  renderCatList();
+  renderOverview();
 }
 
 function toggleAddCatForm() {
