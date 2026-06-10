@@ -1,4 +1,4 @@
-const CACHE = 'alloc-v8';
+const CACHE = 'alloc-v9';
 const ASSETS = ['./allocation-tracker.html', './alloc-manifest.json'];
 
 self.addEventListener('install', e => {
