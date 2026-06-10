@@ -209,6 +209,10 @@ tr:hover td{background:var(--bg2)}
 
     <!-- Accounts pane -->
     <div id="pane-accounts" style="display:none;padding-top:1.25rem">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div class="sec-label" style="margin:0">Institutions</div>
+        <button class="btn-ghost" id="inst-showhide-btn" onclick="toggleAllInst()" style="font-size:12px;color:var(--text3)">Show all ▼</button>
+      </div>
       <div id="manage-list"></div>
       <div style="margin-top:1rem">
         <button class="btn btn-sm" onclick="toggleAddInstForm()">+ Add institution</button>
@@ -856,44 +860,69 @@ async function deleteCat(id) {
 function renderManage() {
   const el=document.getElementById('manage-list'); if(!el) return;
   el.innerHTML=DB.institutions.map(inst=>`
-    <div class="card">
-      <div class="inst-hdr">
+    <div class="card" style="margin-bottom:10px">
+      <div class="inst-hdr" style="cursor:pointer" onclick="toggleInstExpand('inst-body-${inst.id}','inst-chev-${inst.id}')">
         <div class="inst-name">
-          <div class="inst-icon-wrap" onclick="triggerIconUpload('${inst.id}')" title="Change icon">
+          <div class="inst-icon-wrap" onclick="event.stopPropagation();triggerIconUpload('${inst.id}')" title="Change icon">
             <div class="inst-icon inst-icon-btn">${instIconHTML(inst)}</div>
             <div class="inst-icon-overlay">↑</div>
           </div>
           <input type="file" id="icon-file-${inst.id}" accept="image/*" style="display:none" onchange="handleIconUpload('${inst.id}',this)" />
           ${inst.name}
         </div>
-        <div class="row">
-          <button class="btn btn-xs" onclick="toggleAddAcct('${inst.id}')">+ Add account</button>
-          <button class="btn btn-xs btn-danger" onclick="removeInstManage('${inst.id}')">Remove</button>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:13px;color:var(--text3)" id="inst-chev-${inst.id}">▼</span>
         </div>
       </div>
-      ${inst.accounts.map(a=>{
-        const assets=DB_alloc[a.id]||[];
-        const bubbles=assets.length?`<div class="asset-bubbles">${assets.map(pos=>`<span class="asset-bubble" style="background:${getCat(pos.category).color}" title="${getCat(pos.category).label}">${pos.ticker}</span>`).join('')}</div>`:'';
-        return `<div class="acct-row" style="flex-wrap:wrap">
-          <div class="acct-info" style="flex:1">
-            <button class="btn-ghost" style="font-size:11px;color:var(--accent-dark)" onclick="quickAddAsset('${inst.id}','${a.id}')">+ asset</button>
-            <span style="font-size:14px">${a.name}</span><span class="${tagCls(a.type)}">${TAGS[a.type]}</span>
-          </div>
-          <button class="btn-ghost" onclick="removeAcctManage('${inst.id}','${a.id}')">✕</button>
-          ${bubbles?`<div style="width:100%">${bubbles}</div>`:''}
-        </div>`;
-      }).join('')}
-      <div id="add-acct-${inst.id}" class="inline-form">
-        <div class="g3">
-          <div><label>Account name</label><input id="new-name-${inst.id}" /></div>
-          <div><label>Tax treatment</label><select id="new-type-${inst.id}"><option value="taxable">Taxable</option><option value="taxdeferred">Tax-deferred</option><option value="taxfree">Tax-free (Roth)</option><option value="debt">Debt / liability</option><option value="other">Other</option></select></div>
-          <div style="display:flex;align-items:flex-end;gap:4px">
-            <button class="btn btn-sm btn-primary" onclick="saveAcctToInst('${inst.id}')">✓</button>
-            <button class="btn btn-sm" onclick="toggleAddAcct('${inst.id}')">✕</button>
+      <div id="inst-body-${inst.id}" style="display:none">
+        <div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:8px;padding-top:8px;border-top:1px solid var(--border)">
+          <button class="btn btn-xs" onclick="toggleAddAcct('${inst.id}')">+ Add account</button>
+          <button class="btn btn-xs btn-danger" onclick="removeInstManage('${inst.id}')">Remove institution</button>
+        </div>
+        ${inst.accounts.map(a=>{
+          const assets=DB_alloc[a.id]||[];
+          const bubbles=assets.length?`<div class="asset-bubbles">${assets.map(pos=>`<span class="asset-bubble" style="background:${getCat(pos.category).color}" title="${getCat(pos.category).label}">${pos.ticker}</span>`).join('')}</div>`:'';
+          return `<div class="acct-row" style="flex-wrap:wrap">
+            <div class="acct-info" style="flex:1">
+              <button class="btn-ghost" style="font-size:11px;color:var(--accent-dark)" onclick="quickAddAsset('${inst.id}','${a.id}')">+ asset</button>
+              <span style="font-size:14px">${a.name}</span><span class="${tagCls(a.type)}">${TAGS[a.type]}</span>
+            </div>
+            <button class="btn-ghost" onclick="removeAcctManage('${inst.id}','${a.id}')">✕</button>
+            ${bubbles?`<div style="width:100%">${bubbles}</div>`:''}
+          </div>`;
+        }).join('')}
+        <div id="add-acct-${inst.id}" class="inline-form">
+          <div class="g3">
+            <div><label>Account name</label><input id="new-name-${inst.id}" /></div>
+            <div><label>Tax treatment</label><select id="new-type-${inst.id}"><option value="taxable">Taxable</option><option value="taxdeferred">Tax-deferred</option><option value="taxfree">Tax-free (Roth)</option><option value="debt">Debt / liability</option><option value="other">Other</option></select></div>
+            <div style="display:flex;align-items:flex-end;gap:4px">
+              <button class="btn btn-sm btn-primary" onclick="saveAcctToInst('${inst.id}')">✓</button>
+              <button class="btn btn-sm" onclick="toggleAddAcct('${inst.id}')">✕</button>
+            </div>
           </div>
         </div>
       </div>
     </div>`).join('');
+}
+
+function toggleInstExpand(bodyId, chevId) {
+  const body=document.getElementById(bodyId);
+  const chev=document.getElementById(chevId);
+  if(!body) return;
+  const open=body.style.display!=='none';
+  body.style.display=open?'none':'block';
+  if(chev) chev.textContent=open?'▼':'▲';
+}
+
+function toggleAllInst() {
+  const bodies=document.querySelectorAll('[id^="inst-body-"]');
+  const chevs=document.querySelectorAll('[id^="inst-chev-"]');
+  const btn=document.getElementById('inst-showhide-btn');
+  // Check if any are currently open
+  const anyOpen=[...bodies].some(b=>b.style.display!=='none');
+  bodies.forEach(b=>b.style.display=anyOpen?'none':'block');
+  chevs.forEach(c=>c.textContent=anyOpen?'▼':'▲');
+  if(btn) btn.textContent=anyOpen?'Show all ▼':'Hide all ▲';
 }
 
 function triggerIconUpload(instId){const inp=document.getElementById('icon-file-'+instId);if(inp)inp.click();}
